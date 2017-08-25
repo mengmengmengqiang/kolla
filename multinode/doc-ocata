@@ -1,0 +1,392 @@
+############# multinode #########
+
+
+##防火墙不能乱关,可能集群里面其他机器会通过
+#prechecks如果重启docker失败，试试修改模板文件
+#注意newton对应的版本
+#################################################
+###multinodenode主机配置建议
+#deploy_host : RAM => 2G DISK => 40G NETWORK : management, storage, external_vip,
+#controller  : RAM => 4G DISK => 40G NETWORK : management, storage, external_vip, neutron
+#compute     : RAM => 2G DISK => 40G NETWORK : management, storage, neutron, external_vip
+#ceph1       : RAM => 1G DISk => 40G NETWORK : management, storage, external_vip
+#ceph1       : RAM => 1G DISk => 40G NETWORK : management, storage, external_vip
+#ceph1       : RAM => 1G DISk => 40G NETWORK : management, storage, external_vip
+#################################################
+###OpenStack中网络的作用:
+#management : 作为管理网络使用,如ssh登陆网络,或者不同节点之间通信.
+#neutron : 可作为数据网络(VLAN/VXLAN)使用，不同虚拟机之间进行通信时(东西向流量),经过此物理网卡.
+#external_vip : 可作为外部网络使用,即当虚拟机需要与外网进行通信时(南北向流量),经过此物理网卡.
+#storage : 可作为存储网络使用,即当虚拟机与后端存储设备进行交互时,经过此物理网卡.
+################################################################
+#####配置网络 :<1> 每张网卡配置静态IP,并且ifcfg-ethx文件中除了默认网关的网卡外,其他网卡GATEWAY一项都空着不填写
+#####          <2> 自定义路由设置,保证多张网卡能同时工作并且正常访问内外网,路由设置见配置脚本multi_route_config.sh
+#####          <3> 配置部署主机到各个节点的ssh密钥登录,登录IP应属于management网络,主机名为节点主机名
+#####          <4> 各个节点利用scp同步一份hosts文件,能完成hostname到IP的本地解析,hosts文件里主机名应该和管理网络IP对应
+#####          <5> 修改主机名为对应节点名.
+################################################################
+
+
+################################################################
+#更换pip,yum,docker的镜像源为豆瓣源或者njupt的源,njupt的源在深夜或者离南京较远的地方可能不太好用
+################################################################
+
+################################################################
+#相关依赖资源的安装
+yum -y install epel-release  ##如果下载速度太慢可以手动添加epel阿里源,然后运行yum clean all && yum makecache
+yum -y install python-pip
+pip install -U pip
+#安装最新版docker-py
+yum install python-docker-py
+################################################################
+
+################################################################
+#下载kolla openstakc各组件
+#版本要求:
+#|------------------------------------------------------------
+#|    组件   |   最小版本号   |  最大版本号   |     位置      |
+#|-----------|----------------|---------------|---------------|
+#|                     stable/mitaka                          |
+#|-----------|----------------|---------------|---------------|
+#|  ansible  |      1.9.4     |    <2.00      |deployment host|
+#|-----------|----------------|---------------|---------------|
+#|  docker   |     1.10.0     |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#| docker-py |     1.6.0      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#| py jinja2 |     2.6.0      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#|                     stable/newton                          |
+#|-----------|----------------|---------------|---------------|
+#|  ansible  |     2.0.0      |    none       |deployment host|
+#|-----------|----------------|---------------|---------------|
+#|  docker   |     1.10.0     |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#| docker-py |     1.6.0      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#| py jinja2 |     2.8.0      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#|                     stable/ocata                           |
+#|-----------|----------------|---------------|---------------|
+#|  ansible  |      2.0.0     |     none      |deployment host|
+#|-----------|----------------|---------------|---------------|
+#|  docker   |     1.10.0     |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#| docker-py |     1.8.1      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#| py jinja2 |     2.8.0      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+
+##本文档使用stable/ocata分支,版本号4.0.3
+
+#从官网下载docker
+#此方法在某些网络状况下速度较慢
+curl -sSL https://get.docker.io | bash
+
+#查看docker 版本
+docker --version
+
+#新建一个后台守护进程文档增加配置
+#编辑/etc/systemd/system/docker.service.d/kolla.conf
+mkdir -p /etc/systemd/system/docker.service.d
+#加入以下内容
+tee /etc/systemd/system/docker.service.d/kolla.conf <<-'EOF' 
+[Service]
+MountFlags=shared
+EOF
+
+#通过systemd运行docker时,在/usr/lib/systemd/system/docker.service文件中
+#在[Service]下修改MountFlags=slave为MountFlags=shared
+#如果没有MountFlags则添加MountFlags=shared
+
+#重启docker
+systemctl daemon-reload
+systemctl restart docker
+
+#如果各个节点为虚拟机,那么无法使用硬件加速,虚拟机软件选择为qemu,需要修改配置
+mkdir -p /etc/kolla/config/nova
+cat << EOF > /etc/kolla/config/nova/nova-compute.conf
+[libvirt]
+virt_type=qemu
+cpu_mode = none
+EOF
+
+###配置时间同步服务
+#运行ntp_config.sh脚本文件,自动配置
+bash ntp_config
+
+#在OpenStack CLI/Python代码运行的系统上,推荐安装OpenStack和neutrond的命令行客户端以使用OpenStack命令行工具
+#安装相关依赖资源
+yum install -y python-devel libffi-devel openssl-devel gcc git
+#安装客户端
+pip install python-openstackclient python-neutronclient
+
+#从源码安装kolla
+git clone https://git.openstack.org/openstack/kolla
+
+#切换至stable/ocata分支
+git checkout remotes/origin/stable/ocata
+
+#安装kolla工具以及依赖
+pip install kolla/
+
+#复制配置文件
+cp -rv kolla/etc/kolla /etc/ 
+
+#如果宿主机默认启动了libvirt,则关闭之
+systemctl stop libvirtd.service
+systemctl disable libvirtd.service
+
+#安装 ansible (Kolla OpenStack Deployment)
+#安装 kolla-ansible (Ansible Deployment of Kolla containers),安装最新版即可
+#本次部署安装的版本为: kolla==4.0.3.dev13 kolla-ansible==4.0.2
+pip install ansible
+pip install kolla-ansible
+
+#复制全局配置文件以及密码配置文件
+cp -r /usr/share/kolla-ansible/etc_examples/kolla/* /etc/kolla/
+
+
+#切换路径到kolla目录下
+#安装tox (virtualenv-based automation of test activities)
+pip install tox
+#此步骤应在kolla源文件目录下进行
+tox -e genconfig
+
+
+####安装过程需要较多的docker镜像,但是国内对于docker.io的访问很慢,
+####所以需要构建本地镜像仓库提高安装速度,需将预先准备好的docker镜像push到本地仓库
+####获得docker镜像有两种方法,分为本地build镜像和直接下载镜像的压缩包,
+####但是需要注意的是官网提供的压缩包只有最近几个版本的,不同版本的镜像可能会有冲突,
+####本文档采用的是直接下载ocata版本的压缩包,因为版本较新,可以在官网找到压缩包.
+####build镜像大约需要12个小时吧.........(所以尝试过几次后我果断的选则了直接下载)
+###在本地build镜像
+#复制配置文件kolla-build.conf到配置文件目录下
+cp -v ./etc/kolla/kolla-build.conf /etc/kolla/
+#修改参数如下
+
+    #基于centos操作系统
+    base = centos
+    #使用源码安装
+    install_type = source
+    #镜像标签 3.0.0(ocata)
+    tag = 4.0.3
+    #docker命名空间
+    namespace = kolla
+    #镜像仓库名
+    registory = 192.168.100.1:4000
+    #日志文件路径(记得建立日志文件)
+    logs_dir = /var/log/kolla/kolla-build/
+
+##创建日志文件
+mkdir /var/log/kolla
+mkdir /var/lock/kolla/kolla-build
+
+#构建所有镜像(比较多,网络状态不好的话用时较长)
+kolla-build
+#构建指定镜像,如
+kolla-build neutron
+
+
+###使用镜像压缩包
+###官网下载镜像即可
+wget http://tarballs.openstack.org/kolla/images/centos-source-registry-ocata.tar.gz
+
+#新建仓库目录
+mkdir /opt/registry
+
+#切换到仓库目录下
+tar -xvf ~/centos-source-registry-ocata.tar.gz .
+
+#将/opt/registry/docker/registry/v2/repositories/lokolla文件重命名为kolla
+#这是官方docker镜像的名名空间(namespace),我们使用自己的命名空间kolla
+
+###############################################################
+##部署私人docker仓库服务器
+###############################################################
+#openstack似乎要用到5000端口,所以docker容器需要将端口映射到宿主机4000端口
+#将容器存放镜像的目录挂载在之前保存官网镜像的目录下
+docker run  -d                 \  #后台运行
+            -p 4000:5000       \  #宿主机4000端口映射给容器5000端口
+            --restart=always   \  #容器意外关闭后,自动重启
+            --name greenkolla  \  #取名原谅
+            -v /opt/registry:/var/lib/registry #将仓库目录从默认的/var/lib/registry挂载到宿主机/opt/registry上
+            registry:2         \  #启动registry:2镜像 ##貌似要将这一行放在最后,否则-v参数无法识别,容器启动失败
+            /
+
+#配置4000端口开放
+firewall-cmd --zone=public --add-port=4000/tcp --permanent
+firewall-cmd --list-all
+#重新载入生效
+firewall-cmd --reload
+firewall-cmd --list-all
+
+#查看镜像仓库,如果成功则显示推送过去的镜像列表
+curl 192.168.100.1:4000/v2/_catalog
+
+#添加本地docker镜像仓库通信端口地址
+#通信端口的IP最好选择management网络的IP,
+#因为这个网络带宽大而且不会在部署过程中断开,
+#neutron网络在部署过程中会断开,不选择在neutron上连接ssh也是这个道理
+#修改/usr/lib/systemd/system/docker.service
+ExecStart=/usr/bin/dockerd --insecure-registry 192.168.100.1:4000
+#重启docker
+systemctl daemon-reload
+systemctl restart docker
+
+
+######################################################################
+############部署之前的准备
+######################################################################
+
+#修改全局配置 /etc/kolla/globals.yml
+#容器基础镜像为centos
+kolla_base_distro: "centos"
+#镜像安装方式为源码安装
+kolla_install_type: "source"
+#镜像tag为4.0.3(ocata版本)
+openstack_release: "4.0.3"
+#选择management网络里未被使用过的IP
+kolla_internal_vip_address: "192.168.100.154"
+#选择neutron网络里的违背使用过的IP,
+#默认与kolla_internal_vip_address相同
+#通过此IP访问dashboard
+kolla_external_vip_address: "10.22.192.22"
+#本地镜像仓库IP以及镜像命名空间
+docker_registry: "192.168.100.1:4000"
+docker_namespace: "kolla"
+
+#在globals.yml文件中多节点部署时应该注释掉,并且在multinode文件中单独配置,否则会覆盖所有的network_interface
+#network_interface: "eth0"
+#同理
+#neutron_external_interface: "eth1"
+
+#修改docker重启策略
+docker_restart_policy: "on-failure"
+
+#自动生成密码
+kolla-genpwd
+#修改dashboard登陆密码
+keystone_admin_password: admin
+
+#复制multinode到用户目录下
+cp kolla/ansible/inventory/multinode .
+
+#修改multinode文件
+#文件被修改的部分如下,我们将网络和监控服务也安装在控制节点上
+[control]
+controller ansible_user=root network_interface=eth0 storage_interface=eth1 neutron_external_interface=eth3
+
+[network]
+controller ansible_user=root network_interface=eth0 storage_interface=eth1 neutron_external_interface=eth3
+
+[compute]
+compute ansible_user=root network_interface=eth0 storage_interface=eth1 neutron_external_interface=eth2
+
+[monitoring]
+controller ansible_user=root network_interface=eth0 storage_interface=eth1 neutron_external_interface=eth3
+
+[storage]
+ceph1 ansible_user=root network_interface=eth0 storage_interface=eth1
+ceph2 ansible_user=root network_interface=eth0 storage_interface=eth1
+ceph3 ansible_user=root network_interface=eth0 storage_interface=eth1
+
+#拉取官方镜像,这将会在各个节点上下载所需要的镜像
+kolla-ansible pull -i multinode
+
+#查看本地镜像
+docker images
+
+#部署之前检查
+kolla-ansible prechecks -i multinode
+
+#快速准备
+###解决一个Waring:[WARNING]: Module did not set no_log for auth_password
+#在文件/usr/share/kolla-ansible/ansible/library/kolla_docker.py里
+#将auth_password=dict(required=False, type='str')修改成auth_password=dict(required=False, type='str', no_log=True)
+
+#在运行命令时会发生docker重启失败的错误,是因为模板在其他节点里加入了无法启动的docker守护进程配置
+#修改配置模板
+#/usr/share/kolla/ansible/roles/baremetal/templates/ docker_systemd_service.j2 删除第二行之后所有内容
+
+#运行命令
+kolla-ansible -i multinode bootstrap-servers
+
+#部署 
+kolla-ansible deploy -i multinode
+
+#生成admin-openrc.sh配置文件
+kolla-ansible post-deploy
+
+#复制admin-openrc.sh文件到root目录下
+cp /etc/kolla/admin-openrc.sh ~
+source admin-openrc.sh
+
+#验证,这个脚本只能晕运行一次
+#将会下载一个cirrors镜像并且推送到openstack glance镜像服务里面去,并且新建网络,新建路由器等等测试
+cp /usr/share/kolla-ansible/init-runonce .
+./init-runonce
+
+###在电脑上的浏览器里输入https://10.22.192.22可以打开dashboard,登录密码是admin
+
+
+
+##开启ceph
+#因为是在虚拟机里部署,所以我们新建三块10G的qcow2硬盘,分别为OSD1,OSD2,OSD3给三个存储节点使用
+#将存储节点关机,挂载三块硬盘,开机
+#新添加的硬盘标号应为/dev/vdb
+#我们使用ansible来准备disk,包括添加卷标等
+ansible -i multinode \   #inventory文件
+        storage      \   #指定执行命令的主机为inventory文件里的storage组,也就是三台ceph节点
+        -m shell     \   #运行shell命令
+        -a 'parted /dev/vdb -s -- mklabel gpt mkpart KOLLA_CEPH_OSD_BOOTSTRAP 1 -1' / #命令为添加卷标KOLLA_CEPH_OSD_BOOTSTRAP,这是kolla识别硬盘的标志
+
+ansible -i multinode \   #inventory文件
+        storage      \   #指定执行命令的主机为inventory文件里的storage组,也就是三台ceph节点
+        -m shell     \   #运行shell命令
+        -a '' / #命令为添加卷标KOLLA_CEPH_OSD_BOOTSTRAP,这是kolla识别硬盘的标志
+
+#修改配置文件/etc/kolla/globals.yml,打开ceph服务
+enable_ceph: "yes"
+#打开对象存储API服务
+enable_ceph_rgw: "yes"
+#存储池类型,如果选择类型为erasure,则需要添加缓存磁盘,
+#但是这里没有添加缓存,所以不选择erasure类型
+ceph_pool_type: "replicated"
+#打开cinder服务
+#虽然只是开启ceph,但是要把cinder服务开着不然部署报错
+enable_cinder: "yes"
+#镜像存储方式由存储在宿主机文件里,改为存储在ceph中
+glance_backend_file: "no"
+glance_backend_ceph: "yes"
+
+
+#检查
+kolla-ansible prechecks -i multinode
+#把需要的镜像推送到存储节点里面去
+kolla-ansible pull -i multinode
+#如果检查没有问题的话,就可以部署了
+kolla-ansible -i multinode deploy 
+
+#admin-openrc.sh文件相比之前没有改变,不用重新生成
+
+#运行init-runonce,测试
+./init-runonce
+
+
+
+
+###########################################################
+###部署技巧,docker批量操作
+###########################################################
+##清除已经部署的docker
+kolla-ansible destroy -i multinode --yes-i-really-really-mean-it
+
+#重命名镜像
+docker tag [NAME1]:[TAG1] [NAME2]:[TAG2]
+
+#docker批量tag:若仓库注册服务器端口地址为 172.16.0.10:4000,对镜像打标签
+docker images | awk '{print $1}' | xargs -t -i docker tag {}:3.0.0 172.16.0.2:4000/{}:3.0.0
+
+#将所有镜像push入仓库
+docker images | grep 172.16.0.2:4000 | awk '{print $1}' | xargs -t -i docker push {}:3.0.0
