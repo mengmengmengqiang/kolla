@@ -26,6 +26,17 @@
 #####          <5> 修改主机名为对应节点名.
 ################################################################
 
+################################################################
+# 各个节点密码
+# openstack
+################################################################
+################################################################
+#虚拟网络配置建议：
+# management   : 172.20.0.0
+# storage      : 172.21.0.0
+# external_vip : 172.22.0.0
+# neutron      : 172.23.0.0
+################################################################
 
 ################################################################
 #更换pip,yum,docker的镜像源为豆瓣源或者njupt的源,njupt的源在深夜或者离南京较远的地方可能不太好用
@@ -53,6 +64,10 @@ yum install python-docker-py
 #|  docker   |     1.10.0     |     none      |on target nodes|
 #|-----------|----------------|---------------|---------------|
 #| docker-py |     1.6.0      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#| py jinja2 |     2.6.0      |     none      |on target nodes|
+#|-----------|----------------|---------------|---------------|
+#|                     stable/newton                          |
 #|-----------|----------------|---------------|---------------|
 #| py jinja2 |     2.6.0      |     none      |on target nodes|
 #|-----------|----------------|---------------|---------------|
@@ -338,10 +353,6 @@ cp /usr/share/kolla-ansible/init-runonce .
 #我们使用ansible来准备disk,包括添加卷标等
 ansible -i multinode \   #inventory文件
         storage      \   #指定执行命令的主机为inventory文件里的storage组,也就是三台ceph节点
-        -m shell     \   #运行shell命令
-        -a 'parted /dev/vdb -s -- mklabel gpt mkpart KOLLA_CEPH_OSD_BOOTSTRAP 1 -1' / #命令为添加卷标KOLLA_CEPH_OSD_BOOTSTRAP,这是kolla识别硬盘的标志
-
-ansible -i multinode \   #inventory文件
         storage      \   #指定执行命令的主机为inventory文件里的storage组,也就是三台ceph节点
         -m shell     \   #运行shell命令
         -a '' / #命令为添加卷标KOLLA_CEPH_OSD_BOOTSTRAP,这是kolla识别硬盘的标志
