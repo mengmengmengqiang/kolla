@@ -1,0 +1,7 @@
+#! /bin/bash
+virsh start deploy_host
+virsh start controller
+virsh start compute
+virsh start ceph1
+virsh start ceph2
+virsh start ceph3
