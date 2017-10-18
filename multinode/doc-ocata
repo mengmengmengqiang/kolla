@@ -359,9 +359,13 @@ cp /usr/share/kolla-ansible/init-runonce .
 #我们使用ansible来准备disk,包括添加卷标等
 ansible -i multinode \   #inventory文件
         storage      \   #指定执行命令的主机为inventory文件里的storage组,也就是三台ceph节点
-        storage      \   #指定执行命令的主机为inventory文件里的storage组,也就是三台ceph节点
         -m shell     \   #运行shell命令
-        -a '' / #命令为添加卷标KOLLA_CEPH_OSD_BOOTSTRAP,这是kolla识别硬盘的标志
+        -a 'parted /dev/vdb -s -- mklabel gpt mkpart KOLLA_CEPH_OSD_BOOTSTRAP 1 -1' / #命令为虚拟磁盘/dev/vdb添加卷标KOLLA_CEPH_OSD_BOOTSTRAP,这是kolla识别ceph盘的标志
+
+ansible -i multinode \
+        storage      \
+        -m shell     \
+        -a 'parted /dev/vdb print' /   #查看卷标是否添加成功
 
 #修改配置文件/etc/kolla/globals.yml,打开ceph服务
 enable_ceph: "yes"
