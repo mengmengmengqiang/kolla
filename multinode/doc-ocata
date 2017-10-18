@@ -47,7 +47,13 @@
 yum -y install epel-release  ##如果下载速度太慢可以手动添加epel阿里源,然后运行yum clean all && yum makecache
 yum -y install python-pip
 pip install -U pip
-#安装最新版docker-py
+
+############!!!!!!!!!!!!!!!!!!!!!!!!!!!!###############
+#pip 卸载docker-py,原来的docker-py的全部功能由docker代替
+#否则docker-py会干扰docker的执行，使得部署报错
+pip uninstall docker docker-py
+pip install docker
+#安装最新版docker-py,[似乎不用安装的]
 yum install python-docker-py
 ################################################################
 
