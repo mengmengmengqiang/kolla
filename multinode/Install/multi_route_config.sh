@@ -3,27 +3,27 @@
 
 #内网网卡
 ###内网网卡配置静态IP时,不要配置默认GATEWAY
-##eth0 : 172.16.0.2 GATEWAY : 172.16.0.1
-##eth1 : 172.16.1.2 GATEWAY : 172.16.1.1
+##eth0 : 172.20.0.2 GATEWAY : 172.20.0.1
+##eth1 : 172.21.0.2 GATEWAY : 172.21.0.1
 #外网网卡
-##eth2 : 172.16.2.2 GATEWAY : 172.16.2.1
+##eth2 : 172.22.0.2 GATEWAY : 172.22.0.1
 
 ###设置默认网关为外网网卡网关,并且让这条路由位置靠最前
-#route del default gw 172.16.2.1 eth2
-#route add default gw 172.16.2.1 eth2
+#route del default gw 172.22.0.1 eth2
+#route add default gw 172.22.0.1 eth2
 
 #然后单独设置内网网关
-#route add -net 172.16.0.0/24 gw 172.16.0.1 eth0
-#route add -net 172.16.1.0/24 gw 172.16.1.1 eth1
+#route add -net 172.20.0.0/24 gw 172.20.0.1 eth0
+#route add -net 172.21.1.0/24 gw 172.21.0.1 eth1
 
 ##将上面的命令添加到开机启动,并且设置为开机启动服务
 
 tee /usr/local/bin/myroute.sh <<-'EOF'
 #! /bin/bash
-route add -net 172.16.0.0/24 gw 172.16.0.1 eth0&
-route add -net 172.16.1.0/24 gw 172.16.1.1 eth1&
-route del default gw 172.16.2.1 eth2&
-route add default gw 172.16.2.1 eth2&
+route add -net 172.20.0.0/24 gw 172.20.0.1 eth0&
+route add -net 172.21.0.0/24 gw 172.21.0.1 eth1&
+route del default gw 172.22.0.1 eth2&
+route add default gw 172.22.0.1 eth2&
 EOF
 
 #修改权限为754
