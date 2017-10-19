@@ -161,9 +161,10 @@ systemctl disable libvirtd.service
 
 #安装 ansible (Kolla OpenStack Deployment)
 #安装 kolla-ansible (Ansible Deployment of Kolla containers),安装最新版即可
-#本次部署安装的版本为: kolla==4.0.3.dev13 kolla-ansible==4.0.2
+#之前让安装kolla-ansible==4.0.3的版本，但是kolla的本本更新迭代太快了，一个月之前才安装的4.0.2版本已经会报错，这里使用最新版本吧。
+#当前最新版本为kolla-ansible==5.0.0
 pip install ansible
-pip install kolla-ansible==4.0.2
+pip install kolla-ansible==5.0.0
 
 #复制全局配置文件以及密码配置文件
 cp -r /usr/share/kolla-ansible/etc_examples/kolla/* /etc/kolla/
