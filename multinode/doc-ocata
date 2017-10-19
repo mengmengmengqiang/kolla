@@ -12,7 +12,7 @@
 #ceph1       : RAM => 1G DISk => 40G NETWORK : management, storage, external_vip
 #ceph1       : RAM => 1G DISk => 40G NETWORK : management, storage, external_vip
 #ceph1       : RAM => 1G DISk => 40G NETWORK : management, storage, external_vip
-#################################################
+####################[kolla生产架构指南](https://docs.openstack.org/kolla-ansible/latest/admin/production-architecture-guide.html)#############################
 ###OpenStack中网络的作用:
 #management : 作为管理网络使用,如ssh登陆网络,或者不同节点之间通信.
 #neutron : 可作为数据网络(VLAN/VXLAN)使用，不同虚拟机之间进行通信时(东西向流量),经过此物理网卡.
